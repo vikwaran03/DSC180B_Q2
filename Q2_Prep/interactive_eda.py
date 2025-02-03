@@ -1,4 +1,3 @@
-
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -162,61 +161,89 @@ for edge in G.edges:
     
 toggle_script = """
 <script type="text/javascript">
-function toggleEdgesAndNodes(selectedNode) {
-    var network = window.network;
-    var nodes = network.body.data.nodes;
-    var edges = network.body.data.edges;
+document.addEventListener("DOMContentLoaded", function () {
+    initializeNetwork();
+});
 
+function initializeNetwork() {
+    storeOriginalColors();
+    setupNetworkListeners();
+    restoreSelection(true); // Apply selection *before* any network updates
+}
+
+function preventResetOnUpdate() {
+    const selectedNode = sessionStorage.getItem("selectedNode");
+    if (selectedNode !== null) {
+        // Apply selection immediately before any visual updates
+        requestAnimationFrame(() => {
+            toggleEdgesAndNodes(parseInt(selectedNode), true);
+        });
+    }
+}
+
+function toggleEdgesAndNodes(selectedNode, preventSave = false) {
+    const network = window.network;
+    if (!network) return;
+    
+    // Store positions before update
+    network.storePositions();
+    
+    const nodes = network.body.data.nodes;
+    const edges = network.body.data.edges;
+    
     if (selectedNode === null) {
-        // Reset all nodes and edges
         nodes.update(nodes.get().map(node => ({
             id: node.id,
             color: node.originalColor
         })));
         edges.update(edges.get().map(edge => ({ ...edge, hidden: false })));
     } else {
-        var connectedNodes = network.getConnectedNodes(selectedNode);
-        var connectedEdges = network.getConnectedEdges(selectedNode);
-
-        // Update nodes
+        const connectedNodes = network.getConnectedNodes(selectedNode);
+        const connectedEdges = network.getConnectedEdges(selectedNode);
+        
+        // Update nodes immediately with new state
         nodes.update(nodes.get().map(node => ({
             id: node.id,
             color: (node.id === selectedNode || connectedNodes.includes(node.id)) 
-                ? node.originalColor  // Keep selected and neighbors colored
-                : { background: '#CCCCCC', border: '#CCCCCC' } // Gray for non-neighbors
+                ? node.originalColor 
+                : { background: '#CCCCCC', border: '#CCCCCC' }
         })));
-
-        // Update edges
+        
         edges.update(edges.get().map(edge => ({
-            ...edge, hidden: !connectedEdges.includes(edge.id)
+            ...edge, 
+            hidden: !connectedEdges.includes(edge.id)
         })));
-
-        // Store selected node in sessionStorage (to persist after slider updates)
-        sessionStorage.setItem("selectedNode", selectedNode);
+        
+        if (!preventSave) {
+            sessionStorage.setItem("selectedNode", selectedNode);
+        }
     }
 }
 
-// Restore selected node after an update
-function restoreSelection() {
+
+// Restore selection instantly before updates occur
+function restoreSelection(preventSave = false) {
     var selectedNode = sessionStorage.getItem("selectedNode");
-    if (selectedNode !== null) {
-        toggleEdgesAndNodes(parseInt(selectedNode));
+    if (selectedNode !== null && window.network) {
+        toggleEdgesAndNodes(parseInt(selectedNode), preventSave);
     }
 }
 
-// Store original colors when network loads
+// Ensure original colors persist after network loads
 function storeOriginalColors() {
-    var nodes = window.network.body.data.nodes;
-    nodes.update(nodes.get().map(node => ({
-        id: node.id,
-        originalColor: node.color
-    })));
+    if (window.network && window.network.body && window.network.body.data) {
+        var nodes = window.network.body.data.nodes;
+        nodes.update(nodes.get().map(node => ({
+            id: node.id,
+            originalColor: node.color || { background: '#97C2FC', border: '#2B7CE9' }
+        })));
+    }
 }
 
 // Setup event listeners
 function setupNetworkListeners() {
     var network = window.network;
-    storeOriginalColors();
+    if (!network) return;
 
     network.on("click", function(params) {
         if (params.nodes.length > 0) {
@@ -227,11 +254,22 @@ function setupNetworkListeners() {
         }
     });
 
-    // Restore selection after a brief delay
-    setTimeout(restoreSelection, 500);
+    // Hook into the slider update to prevent flickering
+    var slider = document.getElementById("your-slider-id");
+    if (slider) {
+        slider.addEventListener("input", function () {
+            preventResetOnUpdate();
+        });
+    }
 }
 
-document.addEventListener("DOMContentLoaded", setupNetworkListeners);
+// Prevent selection reset by applying the selection before the UI updates
+function preventResetOnUpdate() {
+    var selectedNode = sessionStorage.getItem("selectedNode");
+    if (selectedNode !== null) {
+        toggleEdgesAndNodes(parseInt(selectedNode), true);
+    }
+}
 </script>
 """
 
