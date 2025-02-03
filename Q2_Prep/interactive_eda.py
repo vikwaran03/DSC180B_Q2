@@ -8,6 +8,10 @@ import streamlit as st
 # Set Streamlit page to wide layout (must be at the very start)
 st.set_page_config(layout="wide")
 
+# Add at the beginning after st.set_page_config
+if 'selected_node' not in st.session_state:
+    st.session_state.selected_node = None
+
 # Load data
 ec_hic = np.load('data/GBM39ec_5k_collapsed_matrix.npy')
 hsr_hic = np.load('data/GBM39HSR_5k_collapsed_matrix.npy')
@@ -40,8 +44,9 @@ st.markdown(
     }
     .main .block-container {
         width: 100%;
-        padding: 0;
-        margin: 0;
+        max-width: 100% !important; /* Ensures full width */
+        padding: 0 !important;
+        margin: 0 !important;
         background-color: white !important;
         color: black !important; /* Ensures black font */
     }
@@ -50,22 +55,28 @@ st.markdown(
         height: 90vh;
         margin: 0;
         padding: 0;
-        border: true;
+        border: none; /* Removes iframe border */
     }
     header, footer {
         display: none !important;
     }
-    .st-emotion-cache {
-        color: black !important; /* Ensures black font for Streamlit elements */
+    /* Ensures all text elements are black */
+    h1, h2, h3, h4, h5, h6, p, span, div, label, .st-emotion-cache, .stMarkdown, .stTextInput, .stButton, .stSelectbox, .stSlider, .stCheckbox, .stRadio {
+        color: black !important;
     }
-    h1, h2, h3, h4, h5, h6, p, span, div, label {
-        color: black !important; /* Forces black font for all text */
+    /* Ensures Streamlit widgets have black text */
+    .st-bb, .st-at, .st-ae, .st-af, .st-ag, .st-ah, .st-ai, .st-aj, .st-ak, .st-al, .st-am, .st-an, .st-ao, .st-ap, .st-aq, .st-ar, .st-as {
+        color: black !important;
+    }
+    /* Ensures no extra padding or margins in Streamlit containers */
+    .st-emotion-cache-1v0mbdj, .st-emotion-cache-1y4p8pa, .st-emotion-cache-1n76uvr {
+        padding: 0 !important;
+        margin: 0 !important;
     }
     </style>
     """,
     unsafe_allow_html=True
 )
-
 
 # Add a slider for threshold filtering
 to_filter = st.slider(
@@ -76,7 +87,7 @@ to_filter = st.slider(
     step=5,
     help="Adjust the percentile threshold for filtering the HSR Hi-C matrix."
 )
-
+    
 # Filter Hi-C matrix based on the slider value
 thres = np.percentile(hsr_hic, to_filter)
 vis_hsr = hsr_hic.copy()
@@ -148,48 +159,142 @@ for edge in G.edges:
         color="#D3D3D3",
         smooth=False
     )
-
-# JavaScript for toggling edge visibility when clicking a node
+    
 toggle_script = """
 <script type="text/javascript">
-function toggleEdges(selectedNode) {
+function toggleEdgesAndNodes(selectedNode) {
     var network = window.network;
+    var nodes = network.body.data.nodes;
     var edges = network.body.data.edges;
-    
+
     if (selectedNode === null) {
-        // Show all edges if no node is selected
+        // Reset all nodes and edges
+        nodes.update(nodes.get().map(node => ({
+            id: node.id,
+            color: node.originalColor
+        })));
         edges.update(edges.get().map(edge => ({ ...edge, hidden: false })));
     } else {
+        var connectedNodes = network.getConnectedNodes(selectedNode);
         var connectedEdges = network.getConnectedEdges(selectedNode);
-        
-        // Hide all edges first
-        edges.update(edges.get().map(edge => ({ ...edge, hidden: true })));
-        
-        // Show only edges connected to the selected node
-        edges.update(connectedEdges.map(edgeId => ({ id: edgeId, hidden: false })));
+
+        // Update nodes
+        nodes.update(nodes.get().map(node => ({
+            id: node.id,
+            color: (node.id === selectedNode || connectedNodes.includes(node.id)) 
+                ? node.originalColor  // Keep selected and neighbors colored
+                : { background: '#CCCCCC', border: '#CCCCCC' } // Gray for non-neighbors
+        })));
+
+        // Update edges
+        edges.update(edges.get().map(edge => ({
+            ...edge, hidden: !connectedEdges.includes(edge.id)
+        })));
+
+        // Store selected node in sessionStorage (to persist after slider updates)
+        sessionStorage.setItem("selectedNode", selectedNode);
     }
 }
 
-// Listen for node selection
-function setupNetworkListeners() {
-    var network = window.network;
-    network.on("click", function (params) {
-        if (params.nodes.length > 0) {
-            toggleEdges(params.nodes[0]);
-        } else {
-            toggleEdges(null);  // Restore all edges if clicking outside a node
-        }
-    });
+// Restore selected node after an update
+function restoreSelection() {
+    var selectedNode = sessionStorage.getItem("selectedNode");
+    if (selectedNode !== null) {
+        toggleEdgesAndNodes(parseInt(selectedNode));
+    }
 }
 
-// Initialize the listener when the page loads
+// Store original colors when network loads
+function storeOriginalColors() {
+    var nodes = window.network.body.data.nodes;
+    nodes.update(nodes.get().map(node => ({
+        id: node.id,
+        originalColor: node.color
+    })));
+}
+
+// Setup event listeners
+function setupNetworkListeners() {
+    var network = window.network;
+    storeOriginalColors();
+
+    network.on("click", function(params) {
+        if (params.nodes.length > 0) {
+            toggleEdgesAndNodes(params.nodes[0]);
+        } else {
+            toggleEdgesAndNodes(null);
+            sessionStorage.removeItem("selectedNode");
+        }
+    });
+
+    // Restore selection after a brief delay
+    setTimeout(restoreSelection, 500);
+}
+
 document.addEventListener("DOMContentLoaded", setupNetworkListeners);
 </script>
 """
 
-# (Optional) Additional JavaScript for node highlight if needed (highlight_script omitted for brevity)
+zoom_control_script = """
+<script type="text/javascript">
+document.addEventListener("DOMContentLoaded", function() {
+    let isAnimating = false;
+    let initialScale, initialPosition, minScale;
 
-# Set options for network
+    const setupZoom = () => {
+        if (!window.network || typeof window.network.getScale !== "function") return;
+
+        initialScale = window.network.getScale();
+        initialPosition = window.network.getViewPosition();
+        minScale = initialScale * 1;
+
+        // Clear existing listeners to prevent duplicates
+        window.network.off("zoom");
+        window.network.off("dragEnd");
+    };
+
+    function resetView() {
+        if (isAnimating) return;
+        isAnimating = true;
+        
+        window.network.moveTo({
+            scale: minScale,
+            position: initialPosition,
+            animation: {
+                duration: 1000,
+                easingFunction: "easeInOutCubic"
+            }
+        });
+        
+        setTimeout(() => {
+            isAnimating = false;
+        }, 1000);
+    }
+
+    const checkScaleAndReset = () => {
+        const currentScale = window.network.getScale();
+        if (currentScale <= minScale && !isAnimating) {
+            resetView();
+        }
+    };
+
+    const initInterval = setInterval(() => {
+        if (window.network && typeof window.network.getScale === "function") {
+            setupZoom();
+
+            window.network.on("zoom", checkScaleAndReset);
+            window.network.on("dragEnd", checkScaleAndReset);
+
+            window.addEventListener('resize', setupZoom);
+
+            clearInterval(initInterval);
+        }
+    }, 300);
+});
+</script>
+"""
+
+
 net.set_options("""
 {
     "nodes": {
@@ -215,12 +320,13 @@ net.set_options("""
         "dragView": true,
         "zoomView": true,
         "hover": true
-    }, 
+    },
     "physics": {
         "enabled": false
     }
 }
 """)
+
 
 # Save and display the graph
 net.save_graph("graph.html")
@@ -229,7 +335,7 @@ source_code = HtmlFile.read()
 
 # Embed the graph with JavaScript and increase height parameter
 st.components.v1.html(
-    source_code + toggle_script,
+    source_code + toggle_script + zoom_control_script,
     height=1000,  # Increase the height here as needed
     scrolling=True
 )
