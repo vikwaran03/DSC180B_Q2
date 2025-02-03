@@ -12,16 +12,29 @@ st.set_page_config(layout="wide")
 if 'selected_node' not in st.session_state:
     st.session_state.selected_node = None
 
-data_path = os.path.join(os.path.dirname(__file__), 'data')
+@st.cache_data
+def get_data_path():
+    return os.path.join(os.path.dirname(__file__), 'data')
 
+@st.cache_data
+def load_hic_data():
+    data_path = get_data_path()
+    # ec_hic = np.load(os.path.join(data_path, 'GBM39ec_5k_collapsed_matrix.npy'))
+    hsr_hic = np.load(os.path.join(data_path, 'GBM39HSR_5k_collapsed_matrix.npy'))
+    return hsr_hic
 
-# Load data
-# ec_hic = np.load(os.path.join(data_path, 'GBM39ec_5k_collapsed_matrix.npy'))
-hsr_hic = np.load(os.path.join(data_path, 'GBM39HSR_5k_collapsed_matrix.npy'))
+@st.cache_data
+def load_hsr_features():
+    data_path = get_data_path()
+    hsr_df = pd.read_csv(os.path.join(data_path, 'HSR_features.csv'))
+    hic_hsr_chr7 = hsr_df[(hsr_df['start'] >= 54765000) & (hsr_df['end'] <= 56050000)]
+    hic_hsr_chr7 = hic_hsr_chr7[hic_hsr_chr7['chromosome'] == 'NC_000007.14']
+    return hic_hsr_chr7
 
-hsr_df = pd.read_csv(os.path.join(data_path, 'HSR_features.csv'))
-hic_hsr_chr7 = hsr_df[(hsr_df['start'] >= 54765000) & (hsr_df['end'] <= 56050000)]
-hic_hsr_chr7 = hic_hsr_chr7[hic_hsr_chr7['chromosome'] == 'NC_000007.14']
+# Then use these functions in your main code:
+data_path = get_data_path()
+hsr_hic = load_hic_data()
+hic_hsr_chr7 = load_hsr_features()
 
 # Streamlit UI
 st.title("Interactive Graph Visualization")
@@ -97,8 +110,13 @@ vis_hsr = hsr_hic.copy()
 vis_hsr[vis_hsr < thres] = 0
 np.fill_diagonal(vis_hsr, 0)
 
+@st.cache_data
+def generate_graph(vis_hsr, threshold):
+    G = nx.from_numpy_array(vis_hsr)
+    return G
+
 # Create graph
-G = nx.from_numpy_array(vis_hsr)
+G = generate_graph(vis_hsr, thres)
 
 # Normalize edge weights
 edge_weights = nx.get_edge_attributes(G, "weight")
@@ -124,23 +142,29 @@ net = Network(
 # Layout
 pos = nx.circular_layout(G)
 
+
 # Add nodes dynamically based on view selection
 for node in G.nodes:
+    tit_text = f"""
+            Node: {node}
+            {view_option}: {tot_genes[node] if view_option == 'Total Genes' else num_reads[node]:.2f}
+            Connected Edges: {len(G.edges(node))}
+            """
     x, y = pos[node]
     if view_option == "Total Genes":
-        color = '#4B0082'
+        color = '#1f77b4'  # Base blue
         if tot_genes[node] == 1:
-            color = '#00CED1'
+            color = '#2ca02c'  # Green
         elif tot_genes[node] >= 2:
-            color = '#FFD700'
-        title_text = f"Total Genes: {tot_genes[node]}"
+            color = '#ff7f0e'  # Orange
+        title_text = f"Total Genes: {tit_text}"
     else:
-        color = '#4B0082'
-        if num_reads[node] > 1000:
-            color = '#00CED1'
-        elif num_reads[node] > 2000:
-            color = '#FFD700'
-        title_text = f"Read Counts: {num_reads[node]:.2f}"
+        color = '#1f77b4'  # Base blue
+        if num_reads[node] >= 1000:
+            color = '#2ca02c'  # Green
+        elif num_reads[node] >= 2000:
+            color = '#ff7f0e'  # Orange
+        title_text = f"Read Counts: {tit_text}"
 
     net.add_node(
         node,
@@ -340,21 +364,23 @@ document.addEventListener("DOMContentLoaded", function() {
 net.set_options("""
 {
     "nodes": {
-        "borderWidth": 0,
+        "borderWidth": 2,
         "shape": "dot",
+        "size":20,
         "font": {
-            "size": 10,
+            "size": 12,
             "color": "#000000",
-            "face": "arial",
-            "align": "center"
+            "face": "arial"
         }
     },
     "edges": {
-        "width": 0.3,
-        "selectionWidth": 0.3,
-        "smooth": false,
+        "width": 1,
         "color": {
-            "opacity": 0.3
+            "opacity": 0.6
+        },
+        "smooth": {
+            "type": "continuous",
+            "forceDirection": "none"
         }
     },
     "interaction": {
