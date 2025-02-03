@@ -3,6 +3,7 @@ import pandas as pd
 import networkx as nx
 from pyvis.network import Network
 import streamlit as st
+import os
 
 # Set Streamlit page to wide layout (must be at the very start)
 st.set_page_config(layout="wide")
@@ -11,11 +12,14 @@ st.set_page_config(layout="wide")
 if 'selected_node' not in st.session_state:
     st.session_state.selected_node = None
 
-# Load data
-ec_hic = np.load('data/GBM39ec_5k_collapsed_matrix.npy')
-hsr_hic = np.load('data/GBM39HSR_5k_collapsed_matrix.npy')
+data_path = os.path.join(os.path.dirname(__file__), 'data')
 
-hsr_df = pd.read_csv('data/HSR_features.csv')
+
+# Load data
+# ec_hic = np.load(os.path.join(data_path, 'GBM39ec_5k_collapsed_matrix.npy'))
+hsr_hic = np.load(os.path.join(data_path, 'GBM39HSR_5k_collapsed_matrix.npy'))
+
+hsr_df = pd.read_csv(os.path.join(data_path, 'HSR_features.csv'))
 hic_hsr_chr7 = hsr_df[(hsr_df['start'] >= 54765000) & (hsr_df['end'] <= 56050000)]
 hic_hsr_chr7 = hic_hsr_chr7[hic_hsr_chr7['chromosome'] == 'NC_000007.14']
 
