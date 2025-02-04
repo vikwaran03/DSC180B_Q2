@@ -304,25 +304,37 @@ function preventResetOnUpdate() {
 zoom_control_script = """
 <script type="text/javascript">
 document.addEventListener("DOMContentLoaded", function() {
+    let initialScale, initialPosition, minScale, maxScale;
     let isAnimating = false;
-    let initialScale, initialPosition, minScale;
+    // Define a threshold (in pixels) for how far the view can be dragged when near default zoom.
+    const positionThreshold = 200; 
 
     const setupZoom = () => {
         if (!window.network || typeof window.network.getScale !== "function") return;
 
+        // Record the current scale and position as baseline.
         initialScale = window.network.getScale();
         initialPosition = window.network.getViewPosition();
-        minScale = initialScale * 1;
+        minScale = initialScale * 1;      // Minimum zoom allowed (baseline)
+        maxScale = initialScale * 1;      // Maximum zoom allowed (2× baseline)
 
-        // Clear existing listeners to prevent duplicates
+        // Enforce zoom bounds so the user cannot zoom in past maxScale.
+        window.network.setOptions({
+            interaction: {
+                zoomView: true,
+                minZoom: minScale,
+                maxZoom: maxScale
+            }
+        });
+
+        // Remove duplicate listeners.
         window.network.off("zoom");
         window.network.off("dragEnd");
     };
 
-    function resetView() {
+    const resetView = () => {
         if (isAnimating) return;
         isAnimating = true;
-        
         window.network.moveTo({
             scale: minScale,
             position: initialPosition,
@@ -331,28 +343,40 @@ document.addEventListener("DOMContentLoaded", function() {
                 easingFunction: "easeInOutCubic"
             }
         });
-        
         setTimeout(() => {
             isAnimating = false;
         }, 1000);
-    }
+    };
 
-    const checkScaleAndReset = () => {
+    const checkScaleAndPosition = () => {
         const currentScale = window.network.getScale();
-        if (currentScale <= minScale && !isAnimating) {
+        const currentPosition = window.network.getViewPosition();
+
+        // If the user zooms out too far, recenter the view.
+        if (currentScale < minScale && !isAnimating) {
             resetView();
+            return;
         }
+        
+        // Only check for dragging away from center if we're at or very near the default zoom.
+        if (Math.abs(currentScale - minScale) < 0.01 && !isAnimating) {
+            const deltaX = Math.abs(currentPosition.x - initialPosition.x);
+            const deltaY = Math.abs(currentPosition.y - initialPosition.y);
+            if (deltaX > positionThreshold || deltaY > positionThreshold) {
+                resetView();
+            }
+        }
+        // When zoomed in (currentScale > minScale), allow the user to pan without automatic recentering.
     };
 
     const initInterval = setInterval(() => {
         if (window.network && typeof window.network.getScale === "function") {
             setupZoom();
-
-            window.network.on("zoom", checkScaleAndReset);
-            window.network.on("dragEnd", checkScaleAndReset);
-
+            // Listen to zoom and drag events to monitor the scale and position.
+            window.network.on("zoom", checkScaleAndPosition);
+            window.network.on("dragEnd", checkScaleAndPosition);
+            // Also update zoom bounds on window resize.
             window.addEventListener('resize', setupZoom);
-
             clearInterval(initInterval);
         }
     }, 300);
