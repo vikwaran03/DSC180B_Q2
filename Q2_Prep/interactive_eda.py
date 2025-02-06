@@ -143,6 +143,8 @@ net = Network(
 pos = nx.circular_layout(G)
 
 
+thresh1, thresh2 = np.percentile(num_reads, 50), np.percentile(num_reads, 75)
+
 # Add nodes dynamically based on view selection
 for node in G.nodes:
     tit_text = f"""
@@ -160,10 +162,10 @@ for node in G.nodes:
         title_text = f"Total Genes: {tit_text}"
     else:
         color = '#1f77b4'  # Base blue
-        if num_reads[node] >= 1000:
+        if num_reads[node] > thresh2:
+            color = '#ff7f0e' # Orange
+        elif num_reads[node] > thresh1:
             color = '#2ca02c'  # Green
-        elif num_reads[node] >= 2000:
-            color = '#ff7f0e'  # Orange
         title_text = f"Read Counts: {tit_text}"
 
     net.add_node(
