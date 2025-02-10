@@ -318,7 +318,7 @@ document.addEventListener("DOMContentLoaded", function() {
         initialScale = window.network.getScale();
         initialPosition = window.network.getViewPosition();
         minScale = initialScale * 1;      // Minimum zoom allowed (baseline)
-        maxScale = initialScale * 1;      // Maximum zoom allowed (2× baseline)
+        maxScale = initialScale * 1;      // Maximum zoom allowed (2Ã— baseline)
 
         // Enforce zoom bounds so the user cannot zoom in past maxScale.
         window.network.setOptions({
