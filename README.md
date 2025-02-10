@@ -21,4 +21,8 @@ For the midterm checkpoint, we just have notebooks since they are easy to do exp
 1. graphsagenotebook.ipynb is the noteboook that has our classification with graphsage. You should be able to train a classifier that trains to 89-92% test accuracy.
 2. node2vec.ipynb is the notebook that has the node2vec embeddings and then further clustering using PCA and DBSCAN.
 3. eda.ipynb has some initial visualizations with our graph data.
-4. VIK ADD HOW TO RUN YOUR APP
+
+To view a model of our temporary staged web visualization app on streamlit, follow these steps:
+1. Once all of the code has been cloned onto your computer, log on to DSMLP with this command: ssh -L 8502:localhost:8502 {username}@dsmlp-login.ucsd.edu
+2. Navigate to DSC180B_Q2/Q2_Prep
+3. Run python -m streamlit run interactive_eda.py --server.port 8502 and click on one of the links which will route you to a new tab with a beta of our app. 
