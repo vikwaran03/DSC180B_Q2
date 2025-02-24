@@ -4,6 +4,7 @@ from torch_geometric import utils
 from torch_geometric.nn import SAGEConv
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from scipy.sparse import coo_matrix
 import pandas as pd
@@ -240,7 +241,7 @@ for _ in range(5):
         (train_acc, val_acc, test_acc), (train_loss, val_loss, test_loss) = test(model, G, device)
     
         train_losses.append(loss)
-        valid_losses.append(val_loss)
+        val_losses.append(val_loss)
         test_losses.append(test_loss)
         train_accs.append(train_acc)
         val_accs.append(val_acc)
@@ -263,13 +264,13 @@ for _ in range(5):
 
             if epoch == 5000 and patience_counter < patience:
                 best_models.append(best_model)
-                all_metrics.append(np.array([train_accs, test_accs, val_accs, train_losses, valid_losses, test_losses]))
+                all_metrics.append(np.array([train_accs, test_accs, val_accs, train_losses, val_losses, test_losses]))
                 
             # Stop if validation loss doesn't improve for 'patience' epochs
             if patience_counter >= patience:
                 print(f"Early stopping triggered at epoch {epoch}. Best validation loss: {best_val_loss:.4f}")
                 best_models.append(best_model)
-                all_metrics.append(np.array([train_accs, test_accs, val_accs, train_losses, valid_losses, test_losses]))
+                all_metrics.append(np.array([train_accs, test_accs, val_accs, train_losses, val_losses, test_losses]))
                 break
 
 # save best performing model
@@ -286,7 +287,7 @@ best_metrics = all_metrics[best_model_idx]
 
 # Plot test accuracy and loss across runs
 plt.figure(figsize=(8, 8))
-for i, row in enumerate(test_acc_runs):
+for i, row in enumerate([all_metrics[i][1] for i in range(len(all_metrics))]):
     plt.plot(row, label=f"Run {i+1}")
 plt.xlabel("Epochs")
 plt.ylabel("Test Accuracy")
@@ -295,11 +296,11 @@ plt.legend()
 plt.savefig('sage_acc.png')
 
 plt.figure(figsize=(8, 8))
-for i, row in enumerate(loss_runs):
+for i, row in enumerate([all_metrics[i][3] for i in range(len(all_metrics))]):
     plt.plot(row, label=f"Run {i+1}")
 plt.xlabel("Epochs")
 plt.ylabel("Loss")
-plt.title("Loss Across 5 GraphSAGE Runs")
+plt.title("Training Loss Across 5 GraphSAGE Runs")
 plt.legend()
 plt.savefig('sage_loss.png')
 
@@ -334,6 +335,7 @@ plt.plot(best_metrics[4], label="Validation Loss")
 plt.plot(best_metrics[5], label="Test Loss")
 plt.xlabel("Epochs")
 plt.ylabel("Loss")
+plt.ylim(0,10)
 plt.title("Loss Curves Best Model")
 plt.legend()
 plt.savefig('sage_best_model_loss_curves.png')
