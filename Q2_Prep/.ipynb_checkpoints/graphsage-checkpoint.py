@@ -47,18 +47,32 @@ G = torch_geometric.data.Data(edge_index = edge_index, edge_attr = edge_attr, x 
 
 # Define GraphSAGE
 class GraphSAGE(nn.Module):
-    def __init__(self, num_feat, graph_conv_layer_sizes, lin_hidden_sizes, num_classes):
+    def __init__(self, num_feat, num_graph_conv_layers, graph_conv_layer_sizes, num_lin_layers, lin_hidden_sizes, num_classes):
         super().__init__()
-        self.num_feat = num_feat
-        self.num_classes = num_classes
+        self.num_graph_conv_layers = num_graph_conv_layers
+        self.num_lin_layers = num_lin_layers
         self.embeddings = None
 
-        self.conv1 = SAGEConv(self.num_feat, graph_conv_layer_sizes[0])
-        self.conv2 = SAGEConv(graph_conv_layer_sizes[0], graph_conv_layer_sizes[1])
+        if self.num_graph_conv_layers == 1:
+            self.conv1 = SAGEConv(graph_conv_layer_sizes[0], graph_conv_layer_sizes[1])
+        elif self.num_graph_conv_layers == 2:
+            self.conv1 = SAGEConv(graph_conv_layer_sizes[0], graph_conv_layer_sizes[1])
+            self.conv2 = SAGEConv(graph_conv_layer_sizes[1], graph_conv_layer_sizes[2])
+        elif self.num_graph_conv_layers == 3:
+            self.conv1 = SAGEConv(graph_conv_layer_sizes[0], graph_conv_layer_sizes[1])
+            self.conv2 = SAGEConv(graph_conv_layer_sizes[1], graph_conv_layer_sizes[2])
+            self.conv3 = SAGEConv(graph_conv_layer_sizes[2], graph_conv_layer_sizes[3])
         
-        self.lin1 = nn.Linear(lin_hidden_sizes[0], lin_hidden_sizes[1])
-        self.lin2 = nn.Linear(lin_hidden_sizes[1], self.num_classes)
-        
+        if self.num_lin_layers == 1:
+            self.lin1 = nn.Linear(lin_hidden_sizes[0], lin_hidden_sizes[1])
+        elif self.num_lin_layers == 2:
+            self.lin1 = nn.Linear(lin_hidden_sizes[0], lin_hidden_sizes[1])
+            self.lin2 = nn.Linear(lin_hidden_sizes[1], lin_hidden_sizes[2])
+        elif self.num_lin_layers == 3:
+            self.lin1 = nn.Linear(lin_hidden_sizes[0], lin_hidden_sizes[1])
+            self.lin2 = nn.Linear(lin_hidden_sizes[1], lin_hidden_sizes[2])
+            self.lin3 = nn.Linear(lin_hidden_sizes[2], lin_hidden_sizes[3])
+            
         self.loss_calc = nn.CrossEntropyLoss()
         self.torch_softmax = nn.Softmax(dim=1)
 
@@ -66,18 +80,40 @@ class GraphSAGE(nn.Module):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
 
         ### Graph convolution module
-        h = self.conv1(x, edge_index)
-        h = torch.relu(h)
-        h = self.conv2(h, edge_index)
-        h = torch.relu(h)
+        if self.num_graph_conv_layers == 1:
+            h = self.conv1(x, edge_index)
+            h = torch.relu(h)
+        elif self.num_graph_conv_layers == 2:
+            h = self.conv1(x, edge_index)
+            h = torch.relu(h)
+            h = self.conv2(h, edge_index)
+            h = torch.relu(h)
+        elif self.num_graph_conv_layers == 3:
+            h = self.conv1(x, edge_index)
+            h = torch.relu(h)
+            h = self.conv2(h, edge_index)
+            h = torch.relu(h)
+            h = self.conv3(h, edge_index)
+            h = torch.relu(h)
             
+        #h = F.dropout(h, p = self.dropout_value)
         self.embeddings = h
         scores = h
-        
         ### Linear module
-        scores = self.lin1(scores)
-        scores = torch.relu(scores)
-        scores = self.lin2(scores)
+        if self.num_lin_layers == 0:
+            return scores
+        elif self.num_lin_layers == 1:
+            scores = self.lin1(scores)
+        elif self.num_lin_layers == 2:
+            scores = self.lin1(scores)
+            scores = torch.relu(scores)
+            scores = self.lin2(scores)
+        elif self.num_lin_layers == 3:
+            scores = self.lin1(scores)
+            scores = torch.relu(scores)
+            scores = self.lin2(scores)
+            scores = torch.relu(scores)
+            scores = self.lin3(scores)
         
         return scores
 
@@ -156,26 +192,30 @@ def test(model, graph, device):
 
 # Model inputs + layer information
 num_features = G.num_node_features
+num_graph_sage_layers = 2
 num_classes = 2
-graph_sage_layer_sizes = [8,16]
-linear_layer_sizes = [16,8]
+graph_sage_layer_sizes = [num_features,8,16]
+linear_layer_sizes = [16,8,num_classes]
+num_linear_layers = 2
 
 # Hyperparameters
 learning_rate = 0.01
 weight_decay = 5e-4
 num_epochs = 5000
-patience = 50  # Number of epochs with no improvement before stopping
+patience = 100  # Number of epochs with no improvement before stopping
 min_delta = 0.001  # Minimum change to qualify as an improvement
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 best_models = []
 all_metrics = []
 
 # Training loop - Entire graph in one model
 for _ in range(5):
     # Initialize the model, optimizer, and send to GPU
-    model = GraphSAGE(num_features, graph_sage_layer_sizes, linear_layer_sizes, num_classes).to(device)
+    model = GraphSAGE(num_features, num_graph_sage_layers, graph_sage_layer_sizes, linear_layer_sizes, num_linear_layers, num_classes).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=patience//2, verbose=True) #Reduces LR by 50% when training plateaus
 
     # Assign train and test masks to graph
     G.x = G.x.float()
@@ -199,7 +239,6 @@ for _ in range(5):
         loss, score = train(model, optimizer, G, device)
         (train_acc, val_acc, test_acc), (train_loss, val_loss, test_loss) = test(model, G, device)
     
-        # Track metrics
         train_losses.append(loss)
         valid_losses.append(val_loss)
         test_losses.append(test_loss)
@@ -210,14 +249,17 @@ for _ in range(5):
         if epoch % 500 == 0:
             print(f"Epoch {epoch:03d}, Loss: {loss:.4f}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}, Test Acc: {test_acc:.4f}")
     
-        # Early stopping check - only start checking after 3000 epochs
-        if epoch >= 3000:
+        # Early stopping check - only start checking after 3500 epochs
+        if epoch >= 3500:
             if val_loss < best_val_loss - min_delta:
                 best_val_loss = val_loss
                 patience_counter = 0
-                best_model = model.state_dict()  # Save best model
+                best_model = model  # Save best model
             else:
                 patience_counter += 1
+
+            # Adjust learning rate
+            scheduler.step(val_loss)
 
             if epoch == 5000 and patience_counter < patience:
                 best_models.append(best_model)
@@ -230,11 +272,40 @@ for _ in range(5):
                 all_metrics.append(np.array([train_accs, test_accs, val_accs, train_losses, valid_losses, test_losses]))
                 break
 
-# save model - figure out how to save best performing model from the 5 runs
-#torch.save(save_model.state_dict(), "graphsage_adj.pth")
+# save best performing model
+test_accs_across_runs = [all_metrics[i][1][-100] for i in range(len(all_metrics))]
+max_acc = 0
+best_model_idx = None
+for i,acc in enumerate(test_accs_across_runs):
+    if acc > max_acc:
+        max_acc = acc
+        best_model_idx = i
 
+torch.save(best_models[best_model_idx].state_dict(), "graphsage_adj.pth")
+best_metrics = all_metrics[best_model_idx]
+
+# Plot test accuracy and loss across runs
+plt.figure(figsize=(8, 8))
+for i, row in enumerate(test_acc_runs):
+    plt.plot(row, label=f"Run {i+1}")
+plt.xlabel("Epochs")
+plt.ylabel("Test Accuracy")
+plt.title("Test Accuracy Across 5 GraphSAGE Runs")
+plt.legend()
+plt.savefig('sage_acc.png')
+
+plt.figure(figsize=(8, 8))
+for i, row in enumerate(loss_runs):
+    plt.plot(row, label=f"Run {i+1}")
+plt.xlabel("Epochs")
+plt.ylabel("Loss")
+plt.title("Loss Across 5 GraphSAGE Runs")
+plt.legend()
+plt.savefig('sage_loss.png')
+
+# Plot PCA, Accuracies, Loss for best model
 # Plot PCA of embeddings
-embeddings = model.get_embeddings().cpu().detach().numpy()
+embeddings = best_models[best_model_idx].get_embeddings().cpu().detach().numpy()
 pca = PCA(n_components=2)
 pca_embeds = pca.fit_transform(embeddings)
 ec_mask = (G.y == 1).cpu()
@@ -247,19 +318,22 @@ plt.ylim(-110, 110)
 plt.legend()
 plt.savefig('sage_embeddings.png')
 
-# Plot test accuracy and loss over epochs
 plt.figure(figsize=(8, 8))
-plt.plot(test_accs)
-plt.xlabel("Epochs (x50)")
-plt.ylabel("Test Accuracy")
-plt.title("Test Accuracy Across GraphSAGE Run")
+plt.plot(best_metrics[0], label="Train Accuracy")
+plt.plot(best_metrics[1], label="Test Accuracy")
+plt.plot(best_metrics[2], label="Validation Accuracy")
+plt.xlabel("Epochs")
+plt.ylabel("Accuracy")
+plt.title("Accuracy Curves Best Model")
 plt.legend()
-plt.savefig('sage_acc.png')
+plt.savefig('sage_best_model_acc_curves.png')
 
 plt.figure(figsize=(8, 8))
-plt.plot(losses)
-plt.xlabel("Epochs (x50)")
+plt.plot(best_metrics[3], label="Train Loss")
+plt.plot(best_metrics[4], label="Validation Loss")
+plt.plot(best_metrics[5], label="Test Loss")
+plt.xlabel("Epochs")
 plt.ylabel("Loss")
-plt.title("Loss Across GraphSAGE Run")
+plt.title("Loss Curves Best Model")
 plt.legend()
-plt.savefig('sage_loss.png')
+plt.savefig('sage_best_model_loss_curves.png')
