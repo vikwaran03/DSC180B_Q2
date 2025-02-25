@@ -300,6 +300,7 @@ for i, row in enumerate([all_metrics[i][3] for i in range(len(all_metrics))]):
     plt.plot(row, label=f"Run {i+1}")
 plt.xlabel("Epochs")
 plt.ylabel("Loss")
+plt.ylim(0,10)
 plt.title("Training Loss Across 5 GraphSAGE Runs")
 plt.legend()
 plt.savefig('sage_loss.png')
@@ -307,9 +308,12 @@ plt.savefig('sage_loss.png')
 # Plot PCA, Accuracies, Loss for best model
 # Plot PCA of embeddings
 embeddings = best_models[best_model_idx].get_embeddings().cpu().detach().numpy()
+np.save("data/sage_embeddings.npy", embeddings)
 pca = PCA(n_components=2)
 pca_embeds = pca.fit_transform(embeddings)
 ec_mask = (G.y == 1).cpu()
+np.save("data/ec_pca.npy", pca_embeds[ec_mask])
+np.save("data/hsr_pca.npy", pca_embeds[~ec_mask])
 
 plt.figure(figsize=(8,8))
 plt.scatter(pca_embeds[:, 0][ec_mask], pca_embeds[:, 1][ec_mask], color='red', label='ecDNA', alpha=0.7)
