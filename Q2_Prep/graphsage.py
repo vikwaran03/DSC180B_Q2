@@ -273,7 +273,9 @@ for _ in range(5):
                 all_metrics.append(np.array([train_accs, test_accs, val_accs, train_losses, val_losses, test_losses]))
                 break
 
-# save best performing model
+# save final results from all runs and find best performing model
+train_accs_across_runs = [all_metrics[i][0][-100] for i in range(len(all_metrics))]
+val_accs_across_runs = [all_metrics[i][2][-100] for i in range(len(all_metrics))]
 test_accs_across_runs = [all_metrics[i][1][-100] for i in range(len(all_metrics))]
 max_acc = 0
 best_model_idx = None
@@ -281,6 +283,9 @@ for i,acc in enumerate(test_accs_across_runs):
     if acc > max_acc:
         max_acc = acc
         best_model_idx = i
+
+res_table = pd.DataFrame({'Train Accuracy': train_accs_across_runs, 'Valdiation Accuracy': val_accs_across_runs, 'Test Accuracy': test_accs_across_runs}, index = ['Run 1', 'Run 2', 'Run 3', 'Run 4', 'Run 5'])
+res_table.to_csv('outputs/results_table.csv')
 
 torch.save(best_models[best_model_idx].state_dict(), "graphsage_adj.pth")
 best_metrics = all_metrics[best_model_idx]
@@ -308,12 +313,12 @@ plt.savefig('sage_loss.png')
 # Plot PCA, Accuracies, Loss for best model
 # Plot PCA of embeddings
 embeddings = best_models[best_model_idx].get_embeddings().cpu().detach().numpy()
-np.save("data/sage_embeddings.npy", embeddings)
+np.save("outputs/sage_embeddings.npy", embeddings)
 pca = PCA(n_components=2)
 pca_embeds = pca.fit_transform(embeddings)
 ec_mask = (G.y == 1).cpu()
-np.save("data/ec_pca.npy", pca_embeds[ec_mask])
-np.save("data/hsr_pca.npy", pca_embeds[~ec_mask])
+np.save("outputs/ec_pca.npy", pca_embeds[ec_mask])
+np.save("outputs/hsr_pca.npy", pca_embeds[~ec_mask])
 
 plt.figure(figsize=(8,8))
 plt.scatter(pca_embeds[:, 0][ec_mask], pca_embeds[:, 1][ec_mask], color='red', label='ecDNA', alpha=0.7)
