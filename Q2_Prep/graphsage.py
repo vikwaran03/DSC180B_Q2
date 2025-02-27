@@ -9,8 +9,11 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from scipy.sparse import coo_matrix
 import pandas as pd
 import numpy as np
+import os
 
-from sklearn.decomposition import PCA
+from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.decomposition import PCA 
+import seaborn as sns
 import matplotlib.pyplot as plt
 
 # Load in Hi-c Matrices and node information, build graph
@@ -48,31 +51,14 @@ G = torch_geometric.data.Data(edge_index = edge_index, edge_attr = edge_attr, x 
 
 # Define GraphSAGE
 class GraphSAGE(nn.Module):
-    def __init__(self, num_feat, num_graph_conv_layers, graph_conv_layer_sizes, num_lin_layers, lin_hidden_sizes, num_classes):
+    def __init__(self, num_feat, graph_conv_layer_sizes, lin_hidden_sizes, num_classes):
         super().__init__()
-        self.num_graph_conv_layers = num_graph_conv_layers
-        self.num_lin_layers = num_lin_layers
         self.embeddings = None
+        self.conv1 = SAGEConv(num_feat, graph_conv_layer_sizes[0])
+        self.conv2 = SAGEConv(graph_conv_layer_sizes[0], graph_conv_layer_sizes[1])
 
-        if self.num_graph_conv_layers == 1:
-            self.conv1 = SAGEConv(graph_conv_layer_sizes[0], graph_conv_layer_sizes[1])
-        elif self.num_graph_conv_layers == 2:
-            self.conv1 = SAGEConv(graph_conv_layer_sizes[0], graph_conv_layer_sizes[1])
-            self.conv2 = SAGEConv(graph_conv_layer_sizes[1], graph_conv_layer_sizes[2])
-        elif self.num_graph_conv_layers == 3:
-            self.conv1 = SAGEConv(graph_conv_layer_sizes[0], graph_conv_layer_sizes[1])
-            self.conv2 = SAGEConv(graph_conv_layer_sizes[1], graph_conv_layer_sizes[2])
-            self.conv3 = SAGEConv(graph_conv_layer_sizes[2], graph_conv_layer_sizes[3])
-        
-        if self.num_lin_layers == 1:
-            self.lin1 = nn.Linear(lin_hidden_sizes[0], lin_hidden_sizes[1])
-        elif self.num_lin_layers == 2:
-            self.lin1 = nn.Linear(lin_hidden_sizes[0], lin_hidden_sizes[1])
-            self.lin2 = nn.Linear(lin_hidden_sizes[1], lin_hidden_sizes[2])
-        elif self.num_lin_layers == 3:
-            self.lin1 = nn.Linear(lin_hidden_sizes[0], lin_hidden_sizes[1])
-            self.lin2 = nn.Linear(lin_hidden_sizes[1], lin_hidden_sizes[2])
-            self.lin3 = nn.Linear(lin_hidden_sizes[2], lin_hidden_sizes[3])
+        self.lin1 = nn.Linear(lin_hidden_sizes[0], lin_hidden_sizes[1])
+        self.lin2 = nn.Linear(lin_hidden_sizes[1], num_classes)
             
         self.loss_calc = nn.CrossEntropyLoss()
         self.torch_softmax = nn.Softmax(dim=1)
@@ -81,40 +67,17 @@ class GraphSAGE(nn.Module):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
 
         ### Graph convolution module
-        if self.num_graph_conv_layers == 1:
-            h = self.conv1(x, edge_index)
-            h = torch.relu(h)
-        elif self.num_graph_conv_layers == 2:
-            h = self.conv1(x, edge_index)
-            h = torch.relu(h)
-            h = self.conv2(h, edge_index)
-            h = torch.relu(h)
-        elif self.num_graph_conv_layers == 3:
-            h = self.conv1(x, edge_index)
-            h = torch.relu(h)
-            h = self.conv2(h, edge_index)
-            h = torch.relu(h)
-            h = self.conv3(h, edge_index)
-            h = torch.relu(h)
+        h = self.conv1(x, edge_index)
+        h = torch.relu(h)
+        h = self.conv2(h, edge_index)
+        h = torch.relu(h)
             
-        #h = F.dropout(h, p = self.dropout_value)
         self.embeddings = h
         scores = h
-        ### Linear module
-        if self.num_lin_layers == 0:
-            return scores
-        elif self.num_lin_layers == 1:
-            scores = self.lin1(scores)
-        elif self.num_lin_layers == 2:
-            scores = self.lin1(scores)
-            scores = torch.relu(scores)
-            scores = self.lin2(scores)
-        elif self.num_lin_layers == 3:
-            scores = self.lin1(scores)
-            scores = torch.relu(scores)
-            scores = self.lin2(scores)
-            scores = torch.relu(scores)
-            scores = self.lin3(scores)
+        
+        scores = self.lin1(scores)
+        scores = torch.relu(scores)
+        scores = self.lin2(scores)
         
         return scores
 
@@ -179,25 +142,40 @@ def test(model, graph, device):
     model.eval()
     scores = model(graph)
     softmax, predicted = model.calc_softmax_pred(scores)
+
     accs = []
     losses = []
-    
+    precisions = []
+    recalls = []
+    f1_scores = []
+
     for mask in [graph.train_mask, graph.val_mask, graph.test_mask]:
         loss = model.loss(scores[mask], graph.y[mask]).item()
         correct = (predicted[mask] == graph.y[mask]).sum().item()
         acc = correct / mask.sum().item()
         accs.append(acc)
         losses.append(loss)
-    
-    return accs, losses
+
+        # Convert tensors to numpy arrays for sklearn
+        y_true = graph.y[mask].cpu().numpy()
+        y_pred = predicted[mask].cpu().numpy()
+
+        # Want high recall. High recall = fewer FN. FN is worse than FP. Predicting no cancer when there is cancer is bad
+        precision = precision_score(y_true, y_pred, average='macro', zero_division=0)
+        recall = recall_score(y_true, y_pred, average='macro', zero_division=0)
+        f1 = f1_score(y_true, y_pred, average='macro', zero_division=0)
+
+        precisions.append(precision)
+        recalls.append(recall)
+        f1_scores.append(f1)
+
+    return accs, losses, precisions, recalls, f1_scores, y_true, y_pred
 
 # Model inputs + layer information
 num_features = G.num_node_features
-num_graph_sage_layers = 2
 num_classes = 2
-graph_sage_layer_sizes = [num_features,8,16]
-linear_layer_sizes = [16,8,num_classes]
-num_linear_layers = 2
+graph_sage_layer_sizes = [8,16]
+linear_layer_sizes = [16,8]
 
 # Hyperparameters
 learning_rate = 0.01
@@ -207,22 +185,22 @@ patience = 100  # Number of epochs with no improvement before stopping
 min_delta = 0.001  # Minimum change to qualify as an improvement
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Assign train and test masks to graph
+G.x = G.x.float()
+G.y = G.y.long()
+G = split_data(G)
+G = G.to(device)
 
 best_models = []
 all_metrics = []
+all_preds = []
 
 # Training loop - Entire graph in one model
 for _ in range(5):
     # Initialize the model, optimizer, and send to GPU
-    model = GraphSAGE(num_features, num_graph_sage_layers, graph_sage_layer_sizes, linear_layer_sizes, num_linear_layers, num_classes).to(device)
+    model = GraphSAGE(num_features, graph_sage_layer_sizes, linear_layer_sizes, num_classes).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=patience//2, verbose=True) #Reduces LR by 50% when training plateaus
-
-    # Assign train and test masks to graph
-    G.x = G.x.float()
-    G.y = G.y.long()
-    G = split_data(G)
-    G = G.to(device)
     
     train_accs = []
     val_accs = []
@@ -230,6 +208,16 @@ for _ in range(5):
     train_losses = []
     val_losses = []
     test_losses = []
+    train_precisions = []
+    val_precisions = []
+    test_precisions = []
+    train_recalls = []
+    val_recalls = []
+    test_recalls = []
+    train_f1_scores = []
+    val_f1_scores = []
+    test_f1_scores = []
+    preds = []
     
     best_val_loss = float('inf')
     patience_counter = 0
@@ -238,14 +226,29 @@ for _ in range(5):
     
     for epoch in range(1, num_epochs + 1):
         loss, score = train(model, optimizer, G, device)
-        (train_acc, val_acc, test_acc), (train_loss, val_loss, test_loss) = test(model, G, device)
+        accs, losses, precisions, recalls, f1_scores, y_true, y_pred = test(model, G, device)
+        #(train_acc, val_acc, test_acc), (train_loss, val_loss, test_loss) = test(model, G, device)
+        train_acc = accs[0]
+        val_acc = accs[1]
+        test_acc = accs[2]
+        val_loss = losses[1]
     
         train_losses.append(loss)
         val_losses.append(val_loss)
-        test_losses.append(test_loss)
+        test_losses.append(losses[2])
         train_accs.append(train_acc)
         val_accs.append(val_acc)
         test_accs.append(test_acc)
+        train_precisions.append(precisions[0])
+        val_precisions.append(precisions[1])
+        test_precisions.append(precisions[2])
+        train_recalls.append(recalls[0])
+        val_recalls.append(recalls[1])
+        test_recalls.append(recalls[2])
+        train_f1_scores.append(f1_scores[0])
+        val_f1_scores.append(f1_scores[1])
+        test_f1_scores.append(f1_scores[2])
+        preds.append([y_true, y_pred])
     
         if epoch % 500 == 0:
             print(f"Epoch {epoch:03d}, Loss: {loss:.4f}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}, Test Acc: {test_acc:.4f}")
@@ -265,18 +268,23 @@ for _ in range(5):
             if epoch == 5000 and patience_counter < patience:
                 best_models.append(best_model)
                 all_metrics.append(np.array([train_accs, test_accs, val_accs, train_losses, val_losses, test_losses]))
+                all_preds.append(preds)
                 
             # Stop if validation loss doesn't improve for 'patience' epochs
             if patience_counter >= patience:
                 print(f"Early stopping triggered at epoch {epoch}. Best validation loss: {best_val_loss:.4f}")
                 best_models.append(best_model)
-                all_metrics.append(np.array([train_accs, test_accs, val_accs, train_losses, val_losses, test_losses]))
+                all_metrics.append(np.array([train_accs, test_accs, val_accs, train_losses, val_losses, test_losses, train_precisions, val_precisions, test_precisions, train_recalls, val_recalls, test_recalls, train_f1_scores, val_f1_scores, test_f1_scores]))
+                all_preds.append(preds)
                 break
 
 # save final results from all runs and find best performing model
-train_accs_across_runs = [all_metrics[i][0][-100] for i in range(len(all_metrics))]
-val_accs_across_runs = [all_metrics[i][2][-100] for i in range(len(all_metrics))]
-test_accs_across_runs = [all_metrics[i][1][-100] for i in range(len(all_metrics))]
+train_accs_across_runs = [all_metrics[i][0][-patience] for i in range(len(all_metrics))]
+val_accs_across_runs = [all_metrics[i][2][-patience] for i in range(len(all_metrics))]
+test_accs_across_runs = [all_metrics[i][1][-patience] for i in range(len(all_metrics))]
+test_precision_across_runs = [all_metrics[i][8][-patience] for i in range(len(all_metrics))]
+test_recall_across_runs = [all_metrics[i][11][-patience] for i in range(len(all_metrics))]
+test_f1score_across_runs = [all_metrics[i][14][-patience] for i in range(len(all_metrics))]
 max_acc = 0
 best_model_idx = None
 for i,acc in enumerate(test_accs_across_runs):
@@ -284,11 +292,24 @@ for i,acc in enumerate(test_accs_across_runs):
         max_acc = acc
         best_model_idx = i
 
-res_table = pd.DataFrame({'Train Accuracy': train_accs_across_runs, 'Valdiation Accuracy': val_accs_across_runs, 'Test Accuracy': test_accs_across_runs}, index = ['Run 1', 'Run 2', 'Run 3', 'Run 4', 'Run 5'])
-res_table.to_csv('outputs/results_table.csv')
+if not os.path.exists('plots'):
+    os.makedirs('plots')
 
-torch.save(best_models[best_model_idx].state_dict(), "graphsage_adj.pth")
+if not os.path.exists('model'):
+    os.makedirs('model')
+
+if not os.path.exists('outputs'):
+    os.makedirs('outputs')
+
+res_table_runs = pd.DataFrame({'Train Accuracy': train_accs_across_runs, 'Valdiation Accuracy': val_accs_across_runs, 'Test Accuracy': test_accs_across_runs, 'Test Precision': test_precision_across_runs, 'Test Recall': test_recall_across_runs, 'Test F1 Score': test_f1score_across_runs}, index = ['Run 1', 'Run 2', 'Run 3', 'Run 4', 'Run 5'])
+res_table_runs.to_csv('outputs/sage_run_results_table.csv')
+
+torch.save(best_models[best_model_idx].state_dict(), "model/graphsage_adj.pth")
 best_metrics = all_metrics[best_model_idx]
+best_preds = all_preds[best_model_idx][-patience]
+
+best_model_table = pd.DataFrame({'Train': [best_metrics[0][-patience], best_metrics[6][-patience], best_metrics[9][-patience], best_metrics[12][-patience], best_metrics[3][-patience]], 'Validation': [best_metrics[1][-patience], best_metrics[7][-patience], best_metrics[10][-patience], best_metrics[13][-patience], best_metrics[4][-patience]], 'Test': [best_metrics[2][-patience], best_metrics[8][-patience], best_metrics[11][-patience], best_metrics[14][-patience], best_metrics[5][-patience]]}, index = ['Accuracy', 'Precision', 'Recall', 'F1 Score', 'Loss'])
+best_model_table.to_csv('outputs/sage_best_model_table.csv')
 
 # Plot test accuracy and loss across runs
 plt.figure(figsize=(8, 8))
@@ -298,7 +319,7 @@ plt.xlabel("Epochs")
 plt.ylabel("Test Accuracy")
 plt.title("Test Accuracy Across 5 GraphSAGE Runs")
 plt.legend()
-plt.savefig('sage_acc.png')
+plt.savefig('plots/sage_acc.png')
 
 plt.figure(figsize=(8, 8))
 for i, row in enumerate([all_metrics[i][3] for i in range(len(all_metrics))]):
@@ -308,7 +329,7 @@ plt.ylabel("Loss")
 plt.ylim(0,10)
 plt.title("Training Loss Across 5 GraphSAGE Runs")
 plt.legend()
-plt.savefig('sage_loss.png')
+plt.savefig('plots/sage_loss.png')
 
 # Plot PCA, Accuracies, Loss for best model
 # Plot PCA of embeddings
@@ -326,7 +347,7 @@ plt.scatter(pca_embeds[:, 0][~ec_mask], pca_embeds[:, 1][~ec_mask], color='blue'
 plt.title("GraphSAGE Embeddings PCA")
 plt.ylim(-110, 110)
 plt.legend()
-plt.savefig('sage_embeddings.png')
+plt.savefig('plots/sage_embeddings.png')
 
 plt.figure(figsize=(8, 8))
 plt.plot(best_metrics[0], label="Train Accuracy")
@@ -336,7 +357,7 @@ plt.xlabel("Epochs")
 plt.ylabel("Accuracy")
 plt.title("Accuracy Curves Best Model")
 plt.legend()
-plt.savefig('sage_best_model_acc_curves.png')
+plt.savefig('plots/sage_best_model_acc_curves.png')
 
 plt.figure(figsize=(8, 8))
 plt.plot(best_metrics[3], label="Train Loss")
@@ -347,4 +368,12 @@ plt.ylabel("Loss")
 plt.ylim(0,10)
 plt.title("Loss Curves Best Model")
 plt.legend()
-plt.savefig('sage_best_model_loss_curves.png')
+plt.savefig('plots/sage_best_model_loss_curves.png')
+
+cm = confusion_matrix(best_preds[0], best_preds[1])
+plt.figure(figsize=(8, 8))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['HSR', 'ecDNA'], yticklabels=['HSR', 'ecDNA'])
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+plt.title('Confusion Matrix on Test Set')
+plt.savefig('plots/sage_confusion_matrix.png')
