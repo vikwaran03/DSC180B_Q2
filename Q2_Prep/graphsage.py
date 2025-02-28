@@ -292,8 +292,8 @@ for i,acc in enumerate(test_accs_across_runs):
         max_acc = acc
         best_model_idx = i
 
-if not os.path.exists('plots'):
-    os.makedirs('plots')
+if not os.path.exists('images'):
+    os.makedirs('images')
 
 if not os.path.exists('model'):
     os.makedirs('model')
@@ -319,7 +319,7 @@ plt.xlabel("Epochs")
 plt.ylabel("Test Accuracy")
 plt.title("Test Accuracy Across 5 GraphSAGE Runs")
 plt.legend()
-plt.savefig('plots/sage_acc.png')
+plt.savefig('images/sage_acc.png')
 
 plt.figure(figsize=(8, 8))
 for i, row in enumerate([all_metrics[i][3] for i in range(len(all_metrics))]):
@@ -329,7 +329,7 @@ plt.ylabel("Loss")
 plt.ylim(0,10)
 plt.title("Training Loss Across 5 GraphSAGE Runs")
 plt.legend()
-plt.savefig('plots/sage_loss.png')
+plt.savefig('images/sage_loss.png')
 
 # Plot PCA, Accuracies, Loss for best model
 # Plot PCA of embeddings
@@ -347,7 +347,7 @@ plt.scatter(pca_embeds[:, 0][~ec_mask], pca_embeds[:, 1][~ec_mask], color='blue'
 plt.title("GraphSAGE Embeddings PCA")
 plt.ylim(-110, 110)
 plt.legend()
-plt.savefig('plots/sage_embeddings.png')
+plt.savefig('images/sage_embeddings.png')
 
 plt.figure(figsize=(8, 8))
 plt.plot(best_metrics[0], label="Train Accuracy")
@@ -357,7 +357,7 @@ plt.xlabel("Epochs")
 plt.ylabel("Accuracy")
 plt.title("Accuracy Curves Best Model")
 plt.legend()
-plt.savefig('plots/sage_best_model_acc_curves.png')
+plt.savefig('images/sage_best_model_acc_curves.png')
 
 plt.figure(figsize=(8, 8))
 plt.plot(best_metrics[3], label="Train Loss")
@@ -368,7 +368,7 @@ plt.ylabel("Loss")
 plt.ylim(0,10)
 plt.title("Loss Curves Best Model")
 plt.legend()
-plt.savefig('plots/sage_best_model_loss_curves.png')
+plt.savefig('images/sage_best_model_loss_curves.png')
 
 cm = confusion_matrix(best_preds[0], best_preds[1])
 plt.figure(figsize=(8, 8))
@@ -376,4 +376,4 @@ sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['HSR', 'ecDNA'],
 plt.xlabel('Predicted')
 plt.ylabel('Actual')
 plt.title('Confusion Matrix on Test Set')
-plt.savefig('plots/sage_confusion_matrix.png')
+plt.savefig('images/sage_confusion_matrix.png')
