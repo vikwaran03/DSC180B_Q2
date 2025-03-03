@@ -12,7 +12,6 @@ import numpy as np
 import os
 
 from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
-from sklearn.decomposition import PCA 
 import seaborn as sns
 import matplotlib.pyplot as plt
 
@@ -145,11 +144,14 @@ def test(model, graph, device):
 
     accs = []
     losses = []
-    precisions = []
-    recalls = []
-    f1_scores = []
 
-    for mask in [graph.train_mask, graph.val_mask, graph.test_mask]:
+    train_y_trues = None
+    train_y_preds = None
+
+    test_y_trues = []
+    test_y_preds = []
+
+    for i,mask in enumerate([graph.train_mask, graph.val_mask, graph.test_mask]):
         loss = model.loss(scores[mask], graph.y[mask]).item()
         correct = (predicted[mask] == graph.y[mask]).sum().item()
         acc = correct / mask.sum().item()
@@ -160,16 +162,15 @@ def test(model, graph, device):
         y_true = graph.y[mask].cpu().numpy()
         y_pred = predicted[mask].cpu().numpy()
 
-        # Want high recall. High recall = fewer FN. FN is worse than FP. Predicting no cancer when there is cancer is bad
-        precision = precision_score(y_true, y_pred, average='macro', zero_division=0)
-        recall = recall_score(y_true, y_pred, average='macro', zero_division=0)
-        f1 = f1_score(y_true, y_pred, average='macro', zero_division=0)
+        # save predictions for valid and test sets
+        if i == 0:
+            train_y_trues = y_true
+            train_y_preds = y_pred
+        else:
+            test_y_trues.append(y_true)
+            test_y_preds.append(y_pred)
 
-        precisions.append(precision)
-        recalls.append(recall)
-        f1_scores.append(f1)
-
-    return accs, losses, precisions, recalls, f1_scores, y_true, y_pred
+    return accs, losses, train_y_trues, train_y_preds, np.concatenate(test_y_trues), np.concatenate(test_y_preds)
 
 # Model inputs + layer information
 num_features = G.num_node_features
@@ -178,11 +179,11 @@ graph_sage_layer_sizes = [8,16]
 linear_layer_sizes = [16,8]
 
 # Hyperparameters
-learning_rate = 0.01
+learning_rate = 0.005
 weight_decay = 5e-4
-num_epochs = 5000
-patience = 100  # Number of epochs with no improvement before stopping
-min_delta = 0.001  # Minimum change to qualify as an improvement
+num_epochs = 10000
+patience = 500  # Number of epochs with no improvement before stopping
+min_delta = 0.03  # Minimum change to qualify as an improvement
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Assign train and test masks to graph
@@ -193,7 +194,8 @@ G = G.to(device)
 
 best_models = []
 all_metrics = []
-all_preds = []
+all_train_preds = []
+all_test_preds = []
 
 # Training loop - Entire graph in one model
 for _ in range(5):
@@ -208,26 +210,17 @@ for _ in range(5):
     train_losses = []
     val_losses = []
     test_losses = []
-    train_precisions = []
-    val_precisions = []
-    test_precisions = []
-    train_recalls = []
-    val_recalls = []
-    test_recalls = []
-    train_f1_scores = []
-    val_f1_scores = []
-    test_f1_scores = []
-    preds = []
+    train_preds = []
+    test_preds = []
     
-    best_val_loss = float('inf')
+    best_val_acc = float('-inf')
     patience_counter = 0
     
     best_model = None
     
     for epoch in range(1, num_epochs + 1):
         loss, score = train(model, optimizer, G, device)
-        accs, losses, precisions, recalls, f1_scores, y_true, y_pred = test(model, G, device)
-        #(train_acc, val_acc, test_acc), (train_loss, val_loss, test_loss) = test(model, G, device)
+        accs, losses, train_y_true, train_y_pred, test_y_true, test_y_pred = test(model, G, device)
         train_acc = accs[0]
         val_acc = accs[1]
         test_acc = accs[2]
@@ -239,52 +232,46 @@ for _ in range(5):
         train_accs.append(train_acc)
         val_accs.append(val_acc)
         test_accs.append(test_acc)
-        train_precisions.append(precisions[0])
-        val_precisions.append(precisions[1])
-        test_precisions.append(precisions[2])
-        train_recalls.append(recalls[0])
-        val_recalls.append(recalls[1])
-        test_recalls.append(recalls[2])
-        train_f1_scores.append(f1_scores[0])
-        val_f1_scores.append(f1_scores[1])
-        test_f1_scores.append(f1_scores[2])
-        preds.append([y_true, y_pred])
+        train_preds.append([train_y_true, train_y_pred])
+        test_preds.append([test_y_true, test_y_pred])
     
         if epoch % 500 == 0:
             print(f"Epoch {epoch:03d}, Loss: {loss:.4f}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}, Test Acc: {test_acc:.4f}")
     
-        # Early stopping check - only start checking after 3500 epochs
-        if epoch >= 3500:
-            if val_loss < best_val_loss - min_delta:
-                best_val_loss = val_loss
+        # Early stopping check - only start checking after 5000 epochs
+        if epoch >= 5000:
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                
                 patience_counter = 0
-                best_model = model  # Save best model
+                best_model = model
+            elif val_acc > best_val_acc - min_delta:
+                pass
             else:
                 patience_counter += 1
 
             # Adjust learning rate
             scheduler.step(val_loss)
 
-            if epoch == 5000 and patience_counter < patience:
+            if epoch == 10000 and patience_counter < patience:
                 best_models.append(best_model)
                 all_metrics.append(np.array([train_accs, test_accs, val_accs, train_losses, val_losses, test_losses]))
-                all_preds.append(preds)
+                all_train_preds.append(train_preds)
+                all_test_preds.append(test_preds)
                 
             # Stop if validation loss doesn't improve for 'patience' epochs
             if patience_counter >= patience:
-                print(f"Early stopping triggered at epoch {epoch}. Best validation loss: {best_val_loss:.4f}")
+                print(f"Early stopping triggered at epoch {epoch}. Best validation laccuracy: {best_val_acc:.4f}")
                 best_models.append(best_model)
-                all_metrics.append(np.array([train_accs, test_accs, val_accs, train_losses, val_losses, test_losses, train_precisions, val_precisions, test_precisions, train_recalls, val_recalls, test_recalls, train_f1_scores, val_f1_scores, test_f1_scores]))
-                all_preds.append(preds)
+                all_metrics.append(np.array([train_accs, test_accs, val_accs, train_losses, val_losses, test_losses]))
+                all_train_preds.append(train_preds)
+                all_test_preds.append(test_preds)
                 break
 
 # save final results from all runs and find best performing model
 train_accs_across_runs = [all_metrics[i][0][-patience] for i in range(len(all_metrics))]
 val_accs_across_runs = [all_metrics[i][2][-patience] for i in range(len(all_metrics))]
 test_accs_across_runs = [all_metrics[i][1][-patience] for i in range(len(all_metrics))]
-test_precision_across_runs = [all_metrics[i][8][-patience] for i in range(len(all_metrics))]
-test_recall_across_runs = [all_metrics[i][11][-patience] for i in range(len(all_metrics))]
-test_f1score_across_runs = [all_metrics[i][14][-patience] for i in range(len(all_metrics))]
 max_acc = 0
 best_model_idx = None
 for i,acc in enumerate(test_accs_across_runs):
@@ -301,14 +288,25 @@ if not os.path.exists('model'):
 if not os.path.exists('outputs'):
     os.makedirs('outputs')
 
-res_table_runs = pd.DataFrame({'Train Accuracy': train_accs_across_runs, 'Valdiation Accuracy': val_accs_across_runs, 'Test Accuracy': test_accs_across_runs, 'Test Precision': test_precision_across_runs, 'Test Recall': test_recall_across_runs, 'Test F1 Score': test_f1score_across_runs}, index = ['Run 1', 'Run 2', 'Run 3', 'Run 4', 'Run 5'])
+res_table_runs = pd.DataFrame({'Train Accuracy': train_accs_across_runs, 'Valdiation Accuracy': val_accs_across_runs, 'Test Accuracy': test_accs_across_runs}, index = ['Run 1', 'Run 2', 'Run 3', 'Run 4', 'Run 5'])
 res_table_runs.to_csv('outputs/sage_run_results_table.csv')
 
-torch.save(best_models[best_model_idx].state_dict(), "model/graphsage_adj.pth")
+torch.save(best_models[best_model_idx].state_dict(), "model/graphsage_statedict.pth")
+torch.save(best_models[best_model_idx], "model/graphsage_object.pth")
 best_metrics = all_metrics[best_model_idx]
-best_preds = all_preds[best_model_idx][-patience]
+best_train_preds = all_train_preds[best_model_idx][-patience]
+best_test_preds = all_test_preds[best_model_idx][-patience]
 
-best_model_table = pd.DataFrame({'Train': [best_metrics[0][-patience], best_metrics[6][-patience], best_metrics[9][-patience], best_metrics[12][-patience], best_metrics[3][-patience]], 'Validation': [best_metrics[1][-patience], best_metrics[7][-patience], best_metrics[10][-patience], best_metrics[13][-patience], best_metrics[4][-patience]], 'Test': [best_metrics[2][-patience], best_metrics[8][-patience], best_metrics[11][-patience], best_metrics[14][-patience], best_metrics[5][-patience]]}, index = ['Accuracy', 'Precision', 'Recall', 'F1 Score', 'Loss'])
+# Want high recall. High recall = fewer FN. FN is worse than FP. Predicting no cancer when there is cancer is bad
+train_precision = precision_score(best_train_preds[0], best_train_preds[1], average='macro', zero_division=0)
+train_recall = recall_score(best_train_preds[0], best_train_preds[1], average='macro', zero_division=0)
+train_f1 = f1_score(best_train_preds[0], best_train_preds[1], average='macro', zero_division=0)
+
+test_precision = precision_score(best_test_preds[0], best_test_preds[1], average='macro', zero_division=0)
+test_recall = recall_score(best_test_preds[0], best_test_preds[1], average='macro', zero_division=0)
+test_f1 = f1_score(best_test_preds[0], best_test_preds[1], average='macro', zero_division=0)
+
+best_model_table = pd.DataFrame({'Train': [best_metrics[0][-patience], train_precision, train_recall, train_f1, best_metrics[3][-patience]], 'Test': [best_metrics[2][-patience], test_precision, test_recall, test_f1, best_metrics[5][-patience]]}, index = ['Accuracy', 'Precision', 'Recall', 'F1 Score', 'Loss'])
 best_model_table.to_csv('outputs/sage_best_model_table.csv')
 
 # Plot test accuracy and loss across runs
@@ -331,24 +329,6 @@ plt.title("Training Loss Across 5 GraphSAGE Runs")
 plt.legend()
 plt.savefig('images/sage_loss.png')
 
-# Plot PCA, Accuracies, Loss for best model
-# Plot PCA of embeddings
-embeddings = best_models[best_model_idx].get_embeddings().cpu().detach().numpy()
-np.save("outputs/sage_embeddings.npy", embeddings)
-pca = PCA(n_components=2)
-pca_embeds = pca.fit_transform(embeddings)
-ec_mask = (G.y == 1).cpu()
-np.save("outputs/ec_pca.npy", pca_embeds[ec_mask])
-np.save("outputs/hsr_pca.npy", pca_embeds[~ec_mask])
-
-plt.figure(figsize=(8,8))
-plt.scatter(pca_embeds[:, 0][ec_mask], pca_embeds[:, 1][ec_mask], color='red', label='ecDNA', alpha=0.7)
-plt.scatter(pca_embeds[:, 0][~ec_mask], pca_embeds[:, 1][~ec_mask], color='blue', label='HSR', alpha=0.7)
-plt.title("GraphSAGE Embeddings PCA")
-plt.ylim(-110, 110)
-plt.legend()
-plt.savefig('images/sage_embeddings.png')
-
 plt.figure(figsize=(8, 8))
 plt.plot(best_metrics[0], label="Train Accuracy")
 plt.plot(best_metrics[1], label="Test Accuracy")
@@ -370,7 +350,7 @@ plt.title("Loss Curves Best Model")
 plt.legend()
 plt.savefig('images/sage_best_model_loss_curves.png')
 
-cm = confusion_matrix(best_preds[0], best_preds[1])
+cm = confusion_matrix(best_test_preds[0], best_test_preds[1])
 plt.figure(figsize=(8, 8))
 sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['HSR', 'ecDNA'], yticklabels=['HSR', 'ecDNA'])
 plt.xlabel('Predicted')
