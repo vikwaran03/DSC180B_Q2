@@ -18,8 +18,8 @@ To run the code:
 
 Navigate to the directory Modeling, all paths used later will refer to Modeling as the root directory. This is where all the code lies. All the notebooks/scripts in this directory (not sub-directories) are all you need to replicate our analysis. 1 and 2 are the most vital deliverables of this project - you can run this code through without any additional setup.
 
-1. node2vec.ipynb contains the notebook that does our whole clustering pipeline. Run this notebook through to replicate the clustering analysis including node2vec embeddings, clustering, statistical tests, and HI-C/gene analysis.
-2. graphsage.py contains the code needed to run our classification model. You will be able to achieve an accuracy of around ~81%. Run this script with ```python graphsage.py```. 
-3. structure.ipynb has the code for the 3d visualizations of ecDNA and HSR. All the different iterations of this plot, including gene labels, cluster labels, graphs, are in this notebook.
-4. eda.ipynb has some initial visualizations and the preprocessing associated with our graph data.
-5. data_prep.ipynb is the notebook where we prune our adjacency matrix based on Euclidean distances.
+1. ```node2vec.ipynb``` contains the notebook that does our whole clustering pipeline. Run this notebook through to replicate the clustering analysis including node2vec embeddings, clustering, statistical tests, and HI-C/gene analysis.
+2. ```graphsage.py``` contains the code needed to run our classification model. You will be able to achieve an accuracy of around ~81%. Run this script with ```python graphsage.py```. 
+3. ```structure.ipynb``` has the code for the 3d visualizations of ecDNA and HSR. All the different iterations of this plot, including gene labels, cluster labels, graphs, etc are in this notebook.
+4. ```eda.ipynb``` has some initial visualizations and the preprocessing associated with our graph data.
+5. ```data_prep.ipynb``` is the notebook where we prune our adjacency matrix based on Euclidean distances.
