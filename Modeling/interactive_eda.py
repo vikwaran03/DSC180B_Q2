@@ -5,10 +5,8 @@ from pyvis.network import Network
 import streamlit as st
 import os
 
-# Set Streamlit page to wide layout (must be at the very start)
 st.set_page_config(layout="wide")
 
-# Add at the beginning after st.set_page_config
 if 'selected_node' not in st.session_state:
     st.session_state.selected_node = None
 
@@ -19,9 +17,9 @@ def get_data_path():
 @st.cache_data
 def load_hic_data():
     data_path = get_data_path()
-    # ec_hic = np.load(os.path.join(data_path, 'GBM39ec_5k_collapsed_matrix.npy'))
+    ec_hic = np.load(os.path.join(data_path, 'GBM39ec_5k_collapsed_matrix.npy'))
     hsr_hic = np.load(os.path.join(data_path, 'GBM39HSR_5k_collapsed_matrix.npy'))
-    return hsr_hic
+    return ec_hic, hsr_hic
 
 @st.cache_data
 def load_hsr_features():
@@ -31,15 +29,28 @@ def load_hsr_features():
     hic_hsr_chr7 = hic_hsr_chr7[hic_hsr_chr7['chromosome'] == 'NC_000007.14']
     return hic_hsr_chr7
 
-# Then use these functions in your main code:
+@st.cache_data
+def load_ec_features():
+    data_path = get_data_path()
+    ec_df = pd.read_csv(os.path.join(data_path, 'ecDNA_features.csv'))
+    hic_ec_chr7 = ec_df[(ec_df['start'] >= 54765000) & (ec_df['end'] <= 56050000)]
+    hic_ec_chr7 = hic_ec_chr7[hic_ec_chr7['chromosome'] == 'NC_000007.14']
+    return hic_ec_chr7
+
 data_path = get_data_path()
-hsr_hic = load_hic_data()
+ec_hic, hsr_hic = load_hic_data()
+hic_ec_chr7 = load_ec_features()
 hic_hsr_chr7 = load_hsr_features()
 
-# Streamlit UI
 st.title("Interactive Graph Visualization")
 
-# Toggle option for node coloring
+dataset_option = st.radio(
+    "Select Dataset",
+    ["HSR", "EC"],
+    index=0,
+    help="Choose between HSR or EC dataset for visualization."
+)
+
 view_option = st.radio(
     "Select Node Attribute to Display",
     ["Total Genes", "Read Counts"],
@@ -76,15 +87,15 @@ st.markdown(
     header, footer {
         display: none !important;
     }
-    /* Ensures all text elements are black */
+
     h1, h2, h3, h4, h5, h6, p, span, div, label, .st-emotion-cache, .stMarkdown, .stTextInput, .stButton, .stSelectbox, .stSlider, .stCheckbox, .stRadio {
         color: black !important;
     }
-    /* Ensures Streamlit widgets have black text */
+
     .st-bb, .st-at, .st-ae, .st-af, .st-ag, .st-ah, .st-ai, .st-aj, .st-ak, .st-al, .st-am, .st-an, .st-ao, .st-ap, .st-aq, .st-ar, .st-as {
         color: black !important;
     }
-    /* Ensures no extra padding or margins in Streamlit containers */
+
     .st-emotion-cache-1v0mbdj, .st-emotion-cache-1y4p8pa, .st-emotion-cache-1n76uvr {
         padding: 0 !important;
         margin: 0 !important;
@@ -94,44 +105,49 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Add a slider for threshold filtering
+
+if dataset_option == "HSR":
+    selected_hic = hsr_hic
+    selected_features = hic_hsr_chr7
+else:
+    selected_hic = ec_hic
+    selected_features = hic_ec_chr7
+
 to_filter = st.slider(
     "Percentile Threshold (to_filter)",
     min_value=70,
     max_value=95,
-    value=90,  # Default value
+    value=90,  
     step=5,
-    help="Adjust the percentile threshold for filtering the HSR Hi-C matrix."
 )
-    
-# Filter Hi-C matrix based on the slider value
-thres = np.percentile(hsr_hic, to_filter)
-vis_hsr = hsr_hic.copy()
-vis_hsr[vis_hsr < thres] = 0
-np.fill_diagonal(vis_hsr, 0)
+
+thres = np.percentile(selected_hic, to_filter)
+vis_matrix = selected_hic.copy()
+vis_matrix[vis_matrix < thres] = 0
+np.fill_diagonal(vis_matrix, 0)
 
 @st.cache_data
-def generate_graph(vis_hsr, threshold):
-    G = nx.from_numpy_array(vis_hsr)
+def generate_graph(vis_matrix):
+    G = nx.from_numpy_array(vis_matrix)
     return G
 
-# Create graph
-G = generate_graph(vis_hsr, thres)
+G = generate_graph(vis_matrix)
 
-# Normalize edge weights
 edge_weights = nx.get_edge_attributes(G, "weight")
-max_weight = max(edge_weights.values())
-min_weight = min(edge_weights.values())
+if edge_weights:  
+    max_weight = max(edge_weights.values())
+    min_weight = min(edge_weights.values())
+else:
+    max_weight, min_weight = 1, 0 
+
 normalized_weights = {
     edge: (weight - min_weight) * 0.3 / (max_weight - min_weight)
     for edge, weight in edge_weights.items()
 }
 
-# Node attributes
-tot_genes = hic_hsr_chr7.total_genes.to_numpy()
-num_reads = np.log(hic_hsr_chr7.read_count.to_numpy() + 0.0000000001)
+tot_genes = selected_features.total_genes.to_numpy()
+num_reads = np.log(selected_features.read_count.to_numpy() + 1e-10)
 
-# Create a Pyvis network with full-screen dimensions
 net = Network(
     height="100vh",
     width="100%",
@@ -139,33 +155,34 @@ net = Network(
     font_color="black"
 )
 
-# Layout
 pos = nx.circular_layout(G)
-
 
 thresh1, thresh2 = np.percentile(num_reads, 50), np.percentile(num_reads, 75)
 
-# Add nodes dynamically based on view selection
 for node in G.nodes:
     tit_text = f"""
             Node: {node}
             {view_option}: {tot_genes[node] if view_option == 'Total Genes' else num_reads[node]:.2f}
             Connected Edges: {len(G.edges(node))}
             """
+    
     x, y = pos[node]
+    
     if view_option == "Total Genes":
-        color = '#1f77b4'  # Base blue
+        color = '#1f77b4'
         if tot_genes[node] == 1:
-            color = '#2ca02c'  # Green
+            color = '#2ca02c'
         elif tot_genes[node] >= 2:
-            color = '#ff7f0e'  # Orange
+            color = '#ff7f0e'  
         title_text = f"Total Genes: {tit_text}"
-    else:
-        color = '#1f77b4'  # Base blue
+    
+    else: 
+        color = '#1f77b4'
         if num_reads[node] > thresh2:
-            color = '#ff7f0e' # Orange
+            color = '#ff7f0e' 
         elif num_reads[node] > thresh1:
-            color = '#2ca02c'  # Green
+            color = '#2ca02c'
+        
         title_text = f"Read Counts: {tit_text}"
 
     net.add_node(
@@ -175,19 +192,19 @@ for node in G.nodes:
         size=15,
         color={'background': color, 'border': color},
         x=x * 1000,
-        y=y * 1000
+        y=y * 1000,
     )
 
-# Add edges
 for edge in G.edges:
     net.add_edge(
         edge[0],
         edge[1],
-        value=normalized_weights[edge],
-        title=f"Weight: {edge_weights[edge]:.2f}",
+        value=normalized_weights.get(edge, 0),
+        title=f"Weight: {edge_weights.get(edge, 0):.2f}",
         color="#D3D3D3",
-        smooth=False
+        smooth=False,
     )
+
     
 toggle_script = """
 <script type="text/javascript">
@@ -250,8 +267,6 @@ function toggleEdgesAndNodes(selectedNode, preventSave = false) {
     }
 }
 
-
-// Restore selection instantly before updates occur
 function restoreSelection(preventSave = false) {
     var selectedNode = sessionStorage.getItem("selectedNode");
     if (selectedNode !== null && window.network) {
@@ -259,7 +274,6 @@ function restoreSelection(preventSave = false) {
     }
 }
 
-// Ensure original colors persist after network loads
 function storeOriginalColors() {
     if (window.network && window.network.body && window.network.body.data) {
         var nodes = window.network.body.data.nodes;
@@ -270,7 +284,6 @@ function storeOriginalColors() {
     }
 }
 
-// Setup event listeners
 function setupNetworkListeners() {
     var network = window.network;
     if (!network) return;
@@ -284,7 +297,6 @@ function setupNetworkListeners() {
         }
     });
 
-    // Hook into the slider update to prevent flickering
     var slider = document.getElementById("your-slider-id");
     if (slider) {
         slider.addEventListener("input", function () {
@@ -293,7 +305,6 @@ function setupNetworkListeners() {
     }
 }
 
-// Prevent selection reset by applying the selection before the UI updates
 function preventResetOnUpdate() {
     var selectedNode = sessionStorage.getItem("selectedNode");
     if (selectedNode !== null) {
@@ -308,19 +319,17 @@ zoom_control_script = """
 document.addEventListener("DOMContentLoaded", function() {
     let initialScale, initialPosition, minScale, maxScale;
     let isAnimating = false;
-    // Define a threshold (in pixels) for how far the view can be dragged when near default zoom.
+
     const positionThreshold = 200; 
 
     const setupZoom = () => {
         if (!window.network || typeof window.network.getScale !== "function") return;
 
-        // Record the current scale and position as baseline.
         initialScale = window.network.getScale();
         initialPosition = window.network.getViewPosition();
         minScale = initialScale * 1;      // Minimum zoom allowed (baseline)
         maxScale = initialScale * 1;      // Maximum zoom allowed (2Ã— baseline)
 
-        // Enforce zoom bounds so the user cannot zoom in past maxScale.
         window.network.setOptions({
             interaction: {
                 zoomView: true,
@@ -329,7 +338,6 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         });
 
-        // Remove duplicate listeners.
         window.network.off("zoom");
         window.network.off("dragEnd");
     };
@@ -354,13 +362,11 @@ document.addEventListener("DOMContentLoaded", function() {
         const currentScale = window.network.getScale();
         const currentPosition = window.network.getViewPosition();
 
-        // If the user zooms out too far, recenter the view.
         if (currentScale < minScale && !isAnimating) {
             resetView();
             return;
         }
         
-        // Only check for dragging away from center if we're at or very near the default zoom.
         if (Math.abs(currentScale - minScale) < 0.01 && !isAnimating) {
             const deltaX = Math.abs(currentPosition.x - initialPosition.x);
             const deltaY = Math.abs(currentPosition.y - initialPosition.y);
@@ -368,16 +374,13 @@ document.addEventListener("DOMContentLoaded", function() {
                 resetView();
             }
         }
-        // When zoomed in (currentScale > minScale), allow the user to pan without automatic recentering.
     };
 
     const initInterval = setInterval(() => {
         if (window.network && typeof window.network.getScale === "function") {
             setupZoom();
-            // Listen to zoom and drag events to monitor the scale and position.
             window.network.on("zoom", checkScaleAndPosition);
             window.network.on("dragEnd", checkScaleAndPosition);
-            // Also update zoom bounds on window resize.
             window.addEventListener('resize', setupZoom);
             clearInterval(initInterval);
         }
@@ -385,7 +388,6 @@ document.addEventListener("DOMContentLoaded", function() {
 });
 </script>
 """
-
 
 net.set_options("""
 {
@@ -421,15 +423,12 @@ net.set_options("""
 }
 """)
 
-
-# Save and display the graph
 net.save_graph("graph.html")
 HtmlFile = open("graph.html", "r", encoding="utf-8")
 source_code = HtmlFile.read()
 
-# Embed the graph with JavaScript and increase height parameter
 st.components.v1.html(
     source_code + toggle_script + zoom_control_script,
-    height=1000,  # Increase the height here as needed
-    scrolling=True
+    height=1000,
+    scrolling=True,
 )
