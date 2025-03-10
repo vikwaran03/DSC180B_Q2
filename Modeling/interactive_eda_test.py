@@ -5,10 +5,8 @@ from pyvis.network import Network
 import streamlit as st
 import os
 
-# Set Streamlit page to wide layout (must be at the very start)
 st.set_page_config(layout="wide")
 
-# Add at the beginning after st.set_page_config
 if 'selected_node' not in st.session_state:
     st.session_state.selected_node = None
 
@@ -19,9 +17,9 @@ def get_data_path():
 @st.cache_data
 def load_hic_data():
     data_path = get_data_path()
-    # ec_hic = np.load(os.path.join(data_path, 'GBM39ec_5k_collapsed_matrix.npy'))
+    ec_hic = np.load(os.path.join(data_path, 'GBM39ec_5k_collapsed_matrix.npy'))
     hsr_hic = np.load(os.path.join(data_path, 'GBM39HSR_5k_collapsed_matrix.npy'))
-    return hsr_hic
+    return ec_hic, hsr_hic
 
 @st.cache_data
 def load_hsr_features():
@@ -31,15 +29,28 @@ def load_hsr_features():
     hic_hsr_chr7 = hic_hsr_chr7[hic_hsr_chr7['chromosome'] == 'NC_000007.14']
     return hic_hsr_chr7
 
-# Then use these functions in your main code:
+@st.cache_data
+def load_ec_features():
+    data_path = get_data_path()
+    ec_df = pd.read_csv(os.path.join(data_path, 'ecDNA_features.csv'))
+    hic_ec_chr7 = ec_df[(ec_df['start'] >= 54765000) & (ec_df['end'] <= 56050000)]
+    hic_ec_chr7 = hic_ec_chr7[hic_ec_chr7['chromosome'] == 'NC_000007.14']
+    return hic_ec_chr7
+
 data_path = get_data_path()
-hsr_hic = load_hic_data()
+ec_hic, hsr_hic = load_hic_data()
+hic_ec_chr7 = load_ec_features()
 hic_hsr_chr7 = load_hsr_features()
 
-# Streamlit UI
 st.title("Interactive Graph Visualization")
 
-# Toggle option for node coloring
+dataset_option = st.radio(
+    "Select Dataset",
+    ["HSR", "EC"],
+    index=0,
+    help="Choose between HSR or EC dataset for visualization."
+)
+
 view_option = st.radio(
     "Select Node Attribute to Display",
     ["Total Genes", "Read Counts"],
@@ -94,44 +105,49 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Add a slider for threshold filtering
+
+if dataset_option == "HSR":
+    selected_hic = hsr_hic
+    selected_features = hic_hsr_chr7
+else:
+    selected_hic = ec_hic
+    selected_features = hic_ec_chr7
+
 to_filter = st.slider(
     "Percentile Threshold (to_filter)",
     min_value=70,
     max_value=95,
     value=90,  # Default value
     step=5,
-    help="Adjust the percentile threshold for filtering the HSR Hi-C matrix."
 )
-    
-# Filter Hi-C matrix based on the slider value
-thres = np.percentile(hsr_hic, to_filter)
-vis_hsr = hsr_hic.copy()
-vis_hsr[vis_hsr < thres] = 0
-np.fill_diagonal(vis_hsr, 0)
+
+thres = np.percentile(selected_hic, to_filter)
+vis_matrix = selected_hic.copy()
+vis_matrix[vis_matrix < thres] = 0
+np.fill_diagonal(vis_matrix, 0)
 
 @st.cache_data
-def generate_graph(vis_hsr, threshold):
-    G = nx.from_numpy_array(vis_hsr)
+def generate_graph(vis_matrix):
+    G = nx.from_numpy_array(vis_matrix)
     return G
 
-# Create graph
-G = generate_graph(vis_hsr, thres)
+G = generate_graph(vis_matrix)
 
-# Normalize edge weights
 edge_weights = nx.get_edge_attributes(G, "weight")
-max_weight = max(edge_weights.values())
-min_weight = min(edge_weights.values())
+if edge_weights:  
+    max_weight = max(edge_weights.values())
+    min_weight = min(edge_weights.values())
+else:
+    max_weight, min_weight = 1, 0 
+
 normalized_weights = {
     edge: (weight - min_weight) * 0.3 / (max_weight - min_weight)
     for edge, weight in edge_weights.items()
 }
 
-# Node attributes
-tot_genes = hic_hsr_chr7.total_genes.to_numpy()
-num_reads = np.log(hic_hsr_chr7.read_count.to_numpy() + 0.0000000001)
+tot_genes = selected_features.total_genes.to_numpy()
+num_reads = np.log(selected_features.read_count.to_numpy() + 1e-10)
 
-# Create a Pyvis network with full-screen dimensions
 net = Network(
     height="100vh",
     width="100%",
@@ -139,20 +155,19 @@ net = Network(
     font_color="black"
 )
 
-# Layout
 pos = nx.circular_layout(G)
-
 
 thresh1, thresh2 = np.percentile(num_reads, 50), np.percentile(num_reads, 75)
 
-# Add nodes dynamically based on view selection
 for node in G.nodes:
     tit_text = f"""
             Node: {node}
             {view_option}: {tot_genes[node] if view_option == 'Total Genes' else num_reads[node]:.2f}
             Connected Edges: {len(G.edges(node))}
             """
+    
     x, y = pos[node]
+    
     if view_option == "Total Genes":
         color = '#1f77b4'  # Base blue
         if tot_genes[node] == 1:
@@ -160,12 +175,14 @@ for node in G.nodes:
         elif tot_genes[node] >= 2:
             color = '#ff7f0e'  # Orange
         title_text = f"Total Genes: {tit_text}"
-    else:
-        color = '#1f77b4'  # Base blue
+    
+    else:  # View option is Read Counts
+        color = '#1f77b4'
         if num_reads[node] > thresh2:
-            color = '#ff7f0e' # Orange
+            color = '#ff7f0e'  # Orange
         elif num_reads[node] > thresh1:
             color = '#2ca02c'  # Green
+        
         title_text = f"Read Counts: {tit_text}"
 
     net.add_node(
@@ -175,19 +192,19 @@ for node in G.nodes:
         size=15,
         color={'background': color, 'border': color},
         x=x * 1000,
-        y=y * 1000
+        y=y * 1000,
     )
 
-# Add edges
 for edge in G.edges:
     net.add_edge(
         edge[0],
         edge[1],
-        value=normalized_weights[edge],
-        title=f"Weight: {edge_weights[edge]:.2f}",
+        value=normalized_weights.get(edge, 0),
+        title=f"Weight: {edge_weights.get(edge, 0):.2f}",
         color="#D3D3D3",
-        smooth=False
+        smooth=False,
     )
+
     
 toggle_script = """
 <script type="text/javascript">
@@ -386,7 +403,6 @@ document.addEventListener("DOMContentLoaded", function() {
 </script>
 """
 
-
 net.set_options("""
 {
     "nodes": {
@@ -421,15 +437,12 @@ net.set_options("""
 }
 """)
 
-
-# Save and display the graph
 net.save_graph("graph.html")
 HtmlFile = open("graph.html", "r", encoding="utf-8")
 source_code = HtmlFile.read()
 
-# Embed the graph with JavaScript and increase height parameter
 st.components.v1.html(
     source_code + toggle_script + zoom_control_script,
-    height=1000,  # Increase the height here as needed
-    scrolling=True
+    height=1000,
+    scrolling=True,
 )
