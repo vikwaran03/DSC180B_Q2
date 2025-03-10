@@ -87,15 +87,15 @@ st.markdown(
     header, footer {
         display: none !important;
     }
-    /* Ensures all text elements are black */
+
     h1, h2, h3, h4, h5, h6, p, span, div, label, .st-emotion-cache, .stMarkdown, .stTextInput, .stButton, .stSelectbox, .stSlider, .stCheckbox, .stRadio {
         color: black !important;
     }
-    /* Ensures Streamlit widgets have black text */
+
     .st-bb, .st-at, .st-ae, .st-af, .st-ag, .st-ah, .st-ai, .st-aj, .st-ak, .st-al, .st-am, .st-an, .st-ao, .st-ap, .st-aq, .st-ar, .st-as {
         color: black !important;
     }
-    /* Ensures no extra padding or margins in Streamlit containers */
+
     .st-emotion-cache-1v0mbdj, .st-emotion-cache-1y4p8pa, .st-emotion-cache-1n76uvr {
         padding: 0 !important;
         margin: 0 !important;
@@ -117,7 +117,7 @@ to_filter = st.slider(
     "Percentile Threshold (to_filter)",
     min_value=70,
     max_value=95,
-    value=90,  # Default value
+    value=90,  
     step=5,
 )
 
@@ -169,19 +169,19 @@ for node in G.nodes:
     x, y = pos[node]
     
     if view_option == "Total Genes":
-        color = '#1f77b4'  # Base blue
+        color = '#1f77b4'
         if tot_genes[node] == 1:
-            color = '#2ca02c'  # Green
+            color = '#2ca02c'
         elif tot_genes[node] >= 2:
-            color = '#ff7f0e'  # Orange
+            color = '#ff7f0e'  
         title_text = f"Total Genes: {tit_text}"
     
-    else:  # View option is Read Counts
+    else: 
         color = '#1f77b4'
         if num_reads[node] > thresh2:
-            color = '#ff7f0e'  # Orange
+            color = '#ff7f0e' 
         elif num_reads[node] > thresh1:
-            color = '#2ca02c'  # Green
+            color = '#2ca02c'
         
         title_text = f"Read Counts: {tit_text}"
 
@@ -267,8 +267,6 @@ function toggleEdgesAndNodes(selectedNode, preventSave = false) {
     }
 }
 
-
-// Restore selection instantly before updates occur
 function restoreSelection(preventSave = false) {
     var selectedNode = sessionStorage.getItem("selectedNode");
     if (selectedNode !== null && window.network) {
@@ -276,7 +274,6 @@ function restoreSelection(preventSave = false) {
     }
 }
 
-// Ensure original colors persist after network loads
 function storeOriginalColors() {
     if (window.network && window.network.body && window.network.body.data) {
         var nodes = window.network.body.data.nodes;
@@ -287,7 +284,6 @@ function storeOriginalColors() {
     }
 }
 
-// Setup event listeners
 function setupNetworkListeners() {
     var network = window.network;
     if (!network) return;
@@ -301,7 +297,6 @@ function setupNetworkListeners() {
         }
     });
 
-    // Hook into the slider update to prevent flickering
     var slider = document.getElementById("your-slider-id");
     if (slider) {
         slider.addEventListener("input", function () {
@@ -310,7 +305,6 @@ function setupNetworkListeners() {
     }
 }
 
-// Prevent selection reset by applying the selection before the UI updates
 function preventResetOnUpdate() {
     var selectedNode = sessionStorage.getItem("selectedNode");
     if (selectedNode !== null) {
@@ -325,19 +319,17 @@ zoom_control_script = """
 document.addEventListener("DOMContentLoaded", function() {
     let initialScale, initialPosition, minScale, maxScale;
     let isAnimating = false;
-    // Define a threshold (in pixels) for how far the view can be dragged when near default zoom.
+
     const positionThreshold = 200; 
 
     const setupZoom = () => {
         if (!window.network || typeof window.network.getScale !== "function") return;
 
-        // Record the current scale and position as baseline.
         initialScale = window.network.getScale();
         initialPosition = window.network.getViewPosition();
         minScale = initialScale * 1;      // Minimum zoom allowed (baseline)
         maxScale = initialScale * 1;      // Maximum zoom allowed (2Ã— baseline)
 
-        // Enforce zoom bounds so the user cannot zoom in past maxScale.
         window.network.setOptions({
             interaction: {
                 zoomView: true,
@@ -346,7 +338,6 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         });
 
-        // Remove duplicate listeners.
         window.network.off("zoom");
         window.network.off("dragEnd");
     };
@@ -371,13 +362,11 @@ document.addEventListener("DOMContentLoaded", function() {
         const currentScale = window.network.getScale();
         const currentPosition = window.network.getViewPosition();
 
-        // If the user zooms out too far, recenter the view.
         if (currentScale < minScale && !isAnimating) {
             resetView();
             return;
         }
         
-        // Only check for dragging away from center if we're at or very near the default zoom.
         if (Math.abs(currentScale - minScale) < 0.01 && !isAnimating) {
             const deltaX = Math.abs(currentPosition.x - initialPosition.x);
             const deltaY = Math.abs(currentPosition.y - initialPosition.y);
@@ -385,16 +374,13 @@ document.addEventListener("DOMContentLoaded", function() {
                 resetView();
             }
         }
-        // When zoomed in (currentScale > minScale), allow the user to pan without automatic recentering.
     };
 
     const initInterval = setInterval(() => {
         if (window.network && typeof window.network.getScale === "function") {
             setupZoom();
-            // Listen to zoom and drag events to monitor the scale and position.
             window.network.on("zoom", checkScaleAndPosition);
             window.network.on("dragEnd", checkScaleAndPosition);
-            // Also update zoom bounds on window resize.
             window.addEventListener('resize', setupZoom);
             clearInterval(initInterval);
         }
